@@ -632,6 +632,7 @@ async function getPessoasPorISBN(ISBN) {
         throw e;
     }
 }
+
 async function updateTituloVirtualHasUsuario(oldISBN, newISBN, pessoas_idpessoas) {
     
     try {

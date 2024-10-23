@@ -53,7 +53,9 @@ app.get('/pessoa/:id', async (req, res) => {
     try {
         const pessoa = await getPessoaPeloId(id);
         
-    
+        if(pessoa == null){
+            return res.status(404).json({message: "Pessoa nao existe no banco de dados !"})
+        }
        return res.json({pessoa})
     } catch (error) {
         console.error(`Erro ao obter Pessoa: ${error.message}`);
@@ -63,23 +65,19 @@ app.get('/pessoa/:id', async (req, res) => {
 // ---------------------------------------------
 app.post('/pessoa', async (req, res) => {
     const { idpessoas, datadenascimento, cpf, endereco, numero_celular, status, email } = req.body;
-    const pessoa = new Pessoa(idpessoas,datadenascimento,cpf,endereco,numero_celular,status,email);
-    
+
     if (!idpessoas || !datadenascimento || !cpf || !endereco || !numero_celular || !status || !email) {
         return res.status(400).send('Todos os campos são obrigatórios');
     }
-    let pessoa_existente = await getPessoaPeloId(pessoa.idpessoas);
-    console.log(pessoa_existente);
-    if(pessoa_existente[0] != null){
-        return res.status(403).json({error: "Pessoa já existe no banco de dados, tente mudar o ID"});
-    }
-    try{
-        inserirPessoa(pessoa).then(() =>{
-            return res.status(201).json({pessoa: pessoa.toJSON()})
-        });
-        
-    }catch(err){
-        return res.send(err)
+
+    try {
+        const result = await inserirPessoa(idpessoas, datadenascimento, cpf, endereco, numero_celular, status, email);
+
+    
+        return res.status(201).json(result);
+    } catch (err) {
+        console.error('Erro ao inserir pessoa:', err);
+        return res.status(500).send('Erro ao inserir pessoa');
     }
 });
 // ---------------------------------------------------------------------------------------------
@@ -91,7 +89,7 @@ app.patch("/pessoa", async (req, res) => {
 
     try {
         let pessoa_existente = await getPessoaPeloId(idpessoas);
-        pessoa_existente = pessoa_existente[0];
+        
         if (!pessoa_existente) {
             return res.status(404).json({ error: "Pessoa não encontrada" });
         }
@@ -226,11 +224,11 @@ app.delete('/usuario/:pessoas_idpessoas', async (req, res) => {
     try {
 
         const usuarioDeletado = await getUsuarioPeloId(pessoas_idpessoas);
-        await deleteUsuarioPeloId(pessoas_idpessoas);
+        
         if (!usuarioDeletado) {
             return res.status(404).json({ error: "Usuário não encontrado" });
         }
-
+        const debugger_test = await deleteUsuarioPeloId(pessoas_idpessoas);
         return res.status(200).json({ message: "Usuário deletado com sucesso", usuario: usuarioDeletado });
     } catch (err) {
         console.error('Erro ao deletar usuário:', err);
@@ -424,11 +422,10 @@ app.delete('/titulos_virtuais_usuarios', async (req, res) => {
 // Função para deletar títulos virtuais pelo ISBN
 async function deleteTituloPeloISBN(ISBN) {
     try {
-        const query = `DELETE FROM ${schema}.titulos_virtuais WHERE ISBN = $1`;
-        const values = [ISBN];
-        const res = await client.query(query, values);
-        console.log(`Titulo virtual deletado com sucesso: ${res.rowCount} linha(s) afetada(s)`);
-        return res.rowCount;
+         const result = await client.query(`DELETE FROM ${schema}.titulos_virtuais_has_usuario WHERE titulos_virtuais_isbn = ${ISBN};
+                DELETE FROM ${schema}.titulos_virtuais WHERE isbn = ${ISBN};
+            `);
+        return result;
     } catch (e) {
         console.log(`Algo deu errado na deleção de titulo virtual: ${e.message}`);
         throw e;
@@ -438,7 +435,7 @@ async function deleteTituloPeloISBN(ISBN) {
 // Funcoes e regras de negocio da API
 async function getUsuarioPeloId(idPessoa) {
     try {
-        const query = `SELECT * FROM your_schema.usuario WHERE pessoas_idpessoas = $1`;
+        const query = `SELECT * FROM ${schema}.usuario WHERE pessoas_idpessoas = $1`;
         const values = [idPessoa];
         const res = await client.query(query, values);
         if (res.rows.length > 0) {
@@ -453,22 +450,29 @@ async function getUsuarioPeloId(idPessoa) {
     }
 }
 
-async function inserirPessoa(pessoa) {
+async function inserirPessoa(idpessoas, datadenascimento, cpf, endereco, numero_celular, status, email) {
     try {
+        // Verificar se a pessoa já existe
+        const res = await client.query(`SELECT cpf, idpessoas FROM ${schema}.pessoas WHERE cpf = $1 OR idpessoas = $2`, [cpf, idpessoas]);
         
-        await client.query('BEGIN');
-        const res = await client.query(`SELECT cpf, idpessoas FROM ${schema}.pessoas WHERE cpf = $1 OR idpessoas = $2`, [pessoa.cpf, pessoa.idpessoas]);
-        if (res.rows.length > 0) {
-            return console.log('Pessoa já existe');
-        }
-        
+
+        // Inserir nova pessoa
         await client.query(`
             INSERT INTO ${schema}.pessoas (idpessoas, datadenascimento, cpf, endereco, numero_celular, status, email)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
-        `, [pessoa.idpessoas, pessoa.datadenascimento, pessoa.cpf, pessoa.endereco, pessoa.numero_celular, pessoa.status, pessoa.email]);
+        `, [idpessoas, datadenascimento, cpf, endereco, numero_celular, status, email]);
 
-        await client.query('COMMIT');
         console.log('Pessoa inserida com sucesso!');
+        return {
+            idpessoas,
+            datadenascimento,
+            cpf,
+            endereco,
+            numero_celular,
+            status,
+            email,
+            message: 'Pessoa inserida com sucesso!'
+        };
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('Erro ao inserir pessoa', err.stack);
@@ -524,7 +528,7 @@ async function deletePessoaPeloId(id) {
 }
 async function insertUsuario(idPessoa, carteira, curso, matricula) {
     try {
-        const query = `INSERT INTO ${schema}.usuario (pessoas_idpessoas, carteiraemitida, curso, matricula) VALUES ($1, $2, $3, $4)`;
+        const query = `INSERT INTO ${schema}.usuario (pessoas_idpessoas, carteiraemitida, curso, matricula) VALUES ($1, $2, $3, $4) RETURNING *`;
         const values = [idPessoa, carteira, curso, matricula];
         const res = await client.query(query, values);
         return res.rows[0];
@@ -543,14 +547,14 @@ async function updateUsuario(idPessoa, carteira, curso, matricula) {
     }
 }
 async function deleteUsuarioPeloId(idPessoa) {
+    
     try {
-        const query = `DELETE FROM ${schema}.usuario WHERE pessoas_idpessoas = $1`;
-        const values = [idPessoa];
-        const res = await client.query(query, values);
-        
-        console.log(`Usuario deletado com sucesso: ${res.rowCount} linha(s) afetada(s)`);
+        const reuslt = await client.query(`DELETE FROM ${schema}.titulos_virtuais_has_usuario WHERE usuario_pessoas_idpessoas = ${idPessoa};
+                DELETE FROM ${schema}.usuario WHERE pessoas_idpessoas = ${idPessoa};
+            `)
     } catch (e) {
         console.log(`Algo deu errado na delecao de usuario: ${e.message}`);
+        throw e;
     }
 }
 async function getUsuarioPeloId(idPessoa) {
